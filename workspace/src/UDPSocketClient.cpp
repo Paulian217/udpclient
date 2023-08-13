@@ -22,29 +22,28 @@ SocketReturn UDPSocketClient::Connect(const SocketAddress& address, const std::s
     mSocketListener = listener;
 
     LOGT("socket(%d) Connecting...", mSocketFD);
-    mStatus.store(SocketStatus::CONNECTING);
+    mStatus.store(SocketStatus::CONNECTED);
+    LOGD("socket(%d) Connected!", mSocketFD);
     mThread = std::thread(
         [&](const SocketFD socketfd) {
+            mStatus.store(SocketStatus::RUNNING);
             do {
                 SocketReturn result = ReceiveAndForward(socketfd);
                 if (result == SocketReturn::EOF) {
                     break;
                 }
-            } while (mStatus.load() == SocketStatus::CONNECTED);
+            } while (mStatus.load() == SocketStatus::RUNNING);
             mStatus.store(SocketStatus::IDLE);
         },
         mSocketFD);
 
     /* Wait for Monitor thrad started ... */
     std::this_thread::sleep_for(std::chrono::microseconds(100));
-
-    mStatus.store(SocketStatus::CONNECTED);
-    LOGD("socket(%d) Connected!", mSocketFD);
     return SocketReturn::SUCCESS;
 }
 
 SocketSize UDPSocketClient::Send(const ByteBuffer& buffer) {
-    if (SocketStatus::CONNECTED != mStatus.load()) {
+    if (SocketStatus::RUNNING != mStatus.load()) {
         return 0;
     }
     auto sendsize = std::async(std::launch::async, sendto, mSocketFD, buffer.data(), buffer.size(), MSG_CONFIRM,
@@ -54,20 +53,28 @@ SocketSize UDPSocketClient::Send(const ByteBuffer& buffer) {
 }
 
 SocketReturn UDPSocketClient::Disconnect() {
-    if (mStatus.load() != SocketStatus::CONNECTED) {
-        close(mSocketFD);
-        mStatus.store(SocketStatus::IDLE);
-        return SocketReturn::SUCCESS;
+    switch (mStatus.load()) {
+        case SocketStatus::CONNECTING:
+        case SocketStatus::CONNECTED:
+            close(mSocketFD);
+            mStatus.store(SocketStatus::IDLE);
+            mSocketFD = INVALID_SOCKET;
+            break;
+        case SocketStatus::RUNNING:
+            LOGT("socket(%d) Disconnecting...", mSocketFD);
+            shutdown(mSocketFD, SHUT_RDWR);
+            mStatus.store(SocketStatus::DISCONNECTING);
+            if (mThread.joinable()) {
+                mThread.join();
+            }
+            mSocketFD = INVALID_SOCKET;
+            mStatus.store(SocketStatus::IDLE);
+            LOGD("socket(%d) Disconnected!", mSocketFD);
+            break;
+        case SocketStatus::DISCONNECTING:
+            LOGT("socket(%d) Disconnecting...", mSocketFD);
+            break;
     }
-
-    LOGT("socket(%d) Disconnecting...", mSocketFD);
-    mStatus.store(SocketStatus::DISCONNECTING);
-    shutdown(mSocketFD, SHUT_RDWR);
-    if (mThread.joinable()) {
-        mThread.join();
-    }
-    LOGD("socket(%d) Disconnected!", mSocketFD);
-    mSocketFD = -1;
     return SocketReturn::SUCCESS;
 }
 
@@ -89,12 +96,8 @@ SocketReturn UDPSocketClient::ReceiveAndForward(const SocketFD& socketfd) {
     }
 
     buffer.resize(recvsize);
-    onBufferReceived(addr, buffer);
-    return SocketReturn::SUCCESS;
-}
-
-void UDPSocketClient::onBufferReceived(const SocketAddress& address, const ByteBuffer& buffer) {
     if (mSocketListener != nullptr) {
-        mSocketListener->onBufferReceived(address, buffer);
+        mSocketListener->onBufferReceived(addr, buffer);
     }
+    return SocketReturn::SUCCESS;
 }

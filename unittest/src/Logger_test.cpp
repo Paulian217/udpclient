@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 TEST(LoggerTest, PrintLog) {
+    LOGT("Logging with LogLevel: %s", "TRACE");
     LOGI("Logging with LogLevel: %s", "INFO");
     LOGV("Logging with LogLevel: %s", "VERBOSE");
     LOGD("Logging with LogLevel: %s", "DEBUG");

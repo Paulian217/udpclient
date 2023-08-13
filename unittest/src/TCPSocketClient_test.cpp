@@ -9,8 +9,8 @@
 #include <thread>
 
 constexpr const char* LOCALHOST = "127.0.0.1";
-constexpr const int PORT = 8083;
-constexpr const size_t MAX_MESSAGES = 100;
+constexpr const int PORT = 8883;
+constexpr const size_t MAX_MESSAGES = 5000;
 
 class MockSocketListener : public ISocketListener {
 public:
@@ -28,6 +28,18 @@ protected:
         sockaddrin.sin_family = AF_INET;
         sockaddrin.sin_addr.s_addr = htonl(INADDR_ANY);
         sockaddrin.sin_port = htons(PORT);
+
+        // bool reuseaddr = true;
+        // (void)setsockopt(mSocketFD, SOL_SOCKET, SO_REUSEADDR, &reuseaddr, sizeof(reuseaddr));
+
+        struct Linger {
+            int l_onoff;
+            int l_linger;
+        } linger;
+
+        linger.l_onoff = 1;
+        linger.l_linger = 0;
+        (void)setsockopt(mSocketFD, SOL_SOCKET, SO_LINGER, &linger, sizeof(linger));
 
         (void)bind(mSocketFD, (const sockaddr*)&sockaddrin, sizeof(sockaddrin));
         (void)listen(mSocketFD, UINT8_MAX);
@@ -64,8 +76,10 @@ protected:
     }
 
     void TearDown() {
-        shutdown(mSocketFD, SHUT_RDWR);
         mQuit.store(true);
+        close(mSocketFD);
+        shutdown(mSocketFD, SHUT_RDWR);
+        mSocketFD = -1;
         if (mSocketThread.joinable()) {
             mSocketThread.join();
         }
@@ -79,6 +93,7 @@ protected:
     std::condition_variable mCondition;
 };
 
+#if 1
 TEST_F(TCPSocketClientTest, Connect) {
     SocketFD socketfd = -1;
     TCPSocketClient client(socketfd);
@@ -92,9 +107,10 @@ TEST_F(TCPSocketClientTest, Connect) {
     EXPECT_EQ(SocketReturn::SUCCESS, client.Connect(addr));
     EXPECT_EQ(SocketReturn::SUCCESS, client.Disconnect());
 }
+#endif
 
 TEST_F(TCPSocketClientTest, SendAndReceive) {
-    SocketFD socketfd = -1;
+    SocketFD socketfd = INVALID_SOCKET;
     std::mutex mutex;
     std::condition_variable condition;
     ByteBuffer received;
@@ -113,7 +129,7 @@ TEST_F(TCPSocketClientTest, SendAndReceive) {
     SocketAddress addr;
     memset(&addr, sizeof(addr), 0);
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    addr.sin_addr.s_addr = inet_addr(LOCALHOST);
     addr.sin_port = htons(PORT);
 
     auto ret = client.Connect(addr, listener);

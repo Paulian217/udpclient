@@ -23,7 +23,11 @@ SocketReturn TCPSocketClient::Connect(const SocketAddress& address, const std::s
     LOGT("socket(%d) Connecting...", mSocketFD);
     mStatus.store(SocketStatus::CONNECTING);
     if (INVALID_SOCKET == connect(mSocketFD, (const sockaddr*)&address, sizeof(address))) {
-        LOGE("Failed to connect socket");
+        int error = 0;
+        socklen_t err_len = sizeof(error);
+        if (!getsockopt(mSocketFD, SOL_SOCKET, SO_ERROR, (void*)&error, &err_len)) {
+            LOGE("Failed to connect socket, error: %d", error);
+        }
         mStatus.store(SocketStatus::IDLE);
         return SocketReturn::FAILED;
     }
@@ -53,10 +57,9 @@ SocketSize TCPSocketClient::Send(const ByteBuffer& buffer) {
     if (SocketStatus::RUNNING != mStatus.load()) {
         return 0;
     }
-    auto sendsize = std::async(std::launch::async, sendto, mSocketFD, buffer.data(), buffer.size(), MSG_CONFIRM,
-                               (const struct sockaddr*)&mSocketAddress, sizeof(mSocketAddress))
-                        .get();
-    return static_cast<size_t>(sendsize < 0 ? 0 : sendsize);
+    // auto writesize = write(mSocketFD, buffer.data(), buffer.size());
+    auto writesize = std::async(std::launch::async, write, mSocketFD, buffer.data(), buffer.size()).get();
+    return static_cast<size_t>(writesize < 0 ? 0 : writesize);
 }
 
 SocketReturn TCPSocketClient::Disconnect() {
@@ -70,6 +73,7 @@ SocketReturn TCPSocketClient::Disconnect() {
         case SocketStatus::RUNNING:
             mStatus.store(SocketStatus::DISCONNECTING);
             shutdown(mSocketFD, SHUT_RDWR);
+            close(mSocketFD);
             if (mThread.joinable()) {
                 mThread.join();
             }
@@ -102,12 +106,8 @@ SocketReturn TCPSocketClient::ReceiveAndForward(const SocketFD& socketfd) {
     }
 
     buffer.resize(readsize);
-    onBufferReceived(mSocketAddress, buffer);
-    return SocketReturn::SUCCESS;
-}
-
-void TCPSocketClient::onBufferReceived(const SocketAddress& address, const ByteBuffer& buffer) {
     if (mSocketListener != nullptr) {
-        mSocketListener->onBufferReceived(address, buffer);
+        mSocketListener->onBufferReceived(mSocketAddress, buffer);
     }
+    return SocketReturn::SUCCESS;
 }

@@ -18,7 +18,6 @@ public:
 
 private:
     SocketReturn ReceiveAndForward(const SocketFD& socketfd);
-    void onBufferReceived(const SocketAddress& address, const ByteBuffer& buffer);
 
 private:
     SocketFD mSocketFD;
