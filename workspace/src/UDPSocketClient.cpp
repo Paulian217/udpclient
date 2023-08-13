@@ -21,7 +21,7 @@ SocketReturn UDPSocketClient::Connect(const SocketAddress& address, const std::s
     mSocketAddress = address;
     mSocketListener = listener;
 
-    LOG("socket(%d) Connecting...", mSocketFD);
+    LOGT("socket(%d) Connecting...", mSocketFD);
     mStatus.store(SocketStatus::CONNECTING);
     mThread = std::thread(
         [&](const SocketFD socketfd) {
@@ -34,7 +34,10 @@ SocketReturn UDPSocketClient::Connect(const SocketAddress& address, const std::s
             mStatus.store(SocketStatus::IDLE);
         },
         mSocketFD);
-    usleep(100);
+
+    /* Wait for Monitor thrad started ... */
+    std::this_thread::sleep_for(std::chrono::microseconds(100));
+
     mStatus.store(SocketStatus::CONNECTED);
     LOGD("socket(%d) Connected!", mSocketFD);
     return SocketReturn::SUCCESS;
@@ -52,11 +55,12 @@ SocketSize UDPSocketClient::Send(const ByteBuffer& buffer) {
 
 SocketReturn UDPSocketClient::Disconnect() {
     if (mStatus.load() != SocketStatus::CONNECTED) {
+        close(mSocketFD);
         mStatus.store(SocketStatus::IDLE);
         return SocketReturn::SUCCESS;
     }
 
-    LOG("socket(%d) Disconnecting...", mSocketFD);
+    LOGT("socket(%d) Disconnecting...", mSocketFD);
     mStatus.store(SocketStatus::DISCONNECTING);
     shutdown(mSocketFD, SHUT_RDWR);
     if (mThread.joinable()) {
@@ -70,23 +74,23 @@ SocketReturn UDPSocketClient::Disconnect() {
 SocketReturn UDPSocketClient::ReceiveAndForward(const SocketFD& socketfd) {
     SocketAddress addr;
     socklen_t addrlen = sizeof(addr);
-    ByteBuffer buffer(65535, 0);
+    ByteBuffer buffer(MAX_BUFFER, 0);
 
     // LOGD("socket(%d) Wait for recvfrom", socketfd);
     auto recvsize = recvfrom(socketfd, buffer.data(), buffer.size(), 0, (struct sockaddr*)&addr, &addrlen);
     // LOGD("socket(%d) Wakeup from recvfrom: %ld", socketfd, recvsize);
 
-    SocketReturn ret = SocketReturn::FAILED;
-    if (recvsize > 0) {
-        buffer.resize(recvsize);
-        onBufferReceived(addr, buffer);
-        ret = SocketReturn::SUCCESS;
-    } else if (recvsize == 0) {
-        ret = SocketReturn::EOF;
-    } else {
-        ret = SocketReturn::FAILED;
+    if (SOCKET_EOF == recvsize) {
+        buffer.resize(0);
+        return SocketReturn::EOF;
+    } else if (SOCKET_ERROR == recvsize) {
+        buffer.resize(0);
+        return SocketReturn::FAILED;
     }
-    return ret;
+
+    buffer.resize(recvsize);
+    onBufferReceived(addr, buffer);
+    return SocketReturn::SUCCESS;
 }
 
 void UDPSocketClient::onBufferReceived(const SocketAddress& address, const ByteBuffer& buffer) {

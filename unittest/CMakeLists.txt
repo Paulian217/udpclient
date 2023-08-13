@@ -23,8 +23,10 @@ target_include_directories(${TARGET_EXEC_TEST} PRIVATE
 target_sources(${TARGET_EXEC_TEST} PRIVATE
     ${PROJECT_WORKSPACE_DIR}/src/Logger.cpp
     ${PROJECT_WORKSPACE_DIR}/src/UDPSocketClient.cpp
+    ${PROJECT_WORKSPACE_DIR}/src/TCPSocketClient.cpp
     ${PROJECT_UNITTEST_DIR}/src/main_test.cpp
     ${PROJECT_UNITTEST_DIR}/src/UDPSocketClient_test.cpp
+    ${PROJECT_UNITTEST_DIR}/src/TCPSocketClient_test.cpp
     ${PROJECT_UNITTEST_DIR}/src/Logger_test.cpp)
 
 target_link_libraries(${TARGET_EXEC_TEST} gtest gtest_main gmock gmock_main)

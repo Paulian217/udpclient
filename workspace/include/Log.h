@@ -5,7 +5,7 @@
 #include <string.h>
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
-#define LOG(fmt, ...) LOGI(fmt, ##__VA_ARGS__)
+#define LOGT(fmt, ...) Logger::printLog(LogLevel::NONE, __FILENAME__, __FUNCTION__, __LINE__, fmt, ##__VA_ARGS__)
 #define LOGI(fmt, ...) Logger::printLog(LogLevel::INFO, __FILENAME__, __FUNCTION__, __LINE__, fmt, ##__VA_ARGS__)
 #define LOGV(fmt, ...) Logger::printLog(LogLevel::VERBOSE, __FILENAME__, __FUNCTION__, __LINE__, fmt, ##__VA_ARGS__)
 #define LOGD(fmt, ...) Logger::printLog(LogLevel::DEBUG, __FILENAME__, __FUNCTION__, __LINE__, fmt, ##__VA_ARGS__)

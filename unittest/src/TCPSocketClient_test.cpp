@@ -1,5 +1,5 @@
 #include <Log.h>
-#include <UDPSocketClient.h>
+#include <TCPSocketClient.h>
 #include <arpa/inet.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -10,18 +10,18 @@
 
 constexpr const char* LOCALHOST = "127.0.0.1";
 constexpr const int PORT = 8083;
-constexpr const size_t MAX_MESSAGES = 50000;
+constexpr const size_t MAX_MESSAGES = 100;
 
 class MockSocketListener : public ISocketListener {
 public:
     MOCK_METHOD(void, onBufferReceived, (const struct sockaddr_in&, const std::vector<unsigned char>&), (override));
 };
 
-class UDPSocketClientTest : public ::testing::Test {
+class TCPSocketClientTest : public ::testing::Test {
 protected:
     void SetUp() override {
         // create udp server
-        mSocketFD = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        mSocketFD = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
 
         struct sockaddr_in sockaddrin;
         memset(&sockaddrin, sizeof(sockaddrin), 0);
@@ -30,29 +30,41 @@ protected:
         sockaddrin.sin_port = htons(PORT);
 
         (void)bind(mSocketFD, (const sockaddr*)&sockaddrin, sizeof(sockaddrin));
+        (void)listen(mSocketFD, UINT8_MAX);
 
         mSocketThread = std::thread([this]() {
-            static int i = 0;
-            while (!mQuit.load()) {
-                std::vector<unsigned char> buffer(65535, 0);
-                sockaddr_in sockaddrin;
-                socklen_t sockaddrlen = sizeof(sockaddr_in);
+            sockaddr_in sockaddrin;
+            socklen_t sockaddrlen = sizeof(sockaddr_in);
 
-                auto recvsize = recvfrom(mSocketFD, buffer.data(), buffer.size(), MSG_DONTWAIT, (sockaddr*)&sockaddrin, &sockaddrlen);
-                if (recvsize > 0) {
-                    buffer.resize(recvsize);
-                    sendto(mSocketFD, buffer.data(), buffer.size(), SOCKET_NO_OPTION, (sockaddr*)&sockaddrin, sockaddrlen);
-                } else {
-                    uint8_t error = 0;
-                    socklen_t socklen = sizeof(error);
-                    getsockopt(mSocketFD, SOL_SOCKET, SO_ERROR, &error, &socklen);
-                }
+            LOGV("socket(%d) Wait for accept...", mSocketFD);
+            auto connsockfd = accept(mSocketFD, (sockaddr*)&sockaddrin, &sockaddrlen);
+            if (connsockfd <= 0) {
+                LOGV("socket(%d) Shutdown!", mSocketFD);
+                return;
             }
-            close(mSocketFD);
+            LOGV("socket(%d) Accepted! connsockfd: %d", mSocketFD, connsockfd);
+
+            while (!mQuit.load()) {
+                // LOGV("socket(%d) Wait for read from socketfd...", mSocketFD, connsockfd);
+                std::vector<unsigned char> buffer(65535, 0);
+                auto readsize = read(connsockfd, buffer.data(), buffer.size());
+                if (SOCKET_EOF == readsize) {
+                    LOGV("socket(%d) Awake! EOF", connsockfd);
+                    break;
+                } else if (SOCKET_ERROR == readsize) {
+                    LOGW("socket(%d) Awake! Failed to read", connsockfd);
+                    continue;
+                }
+                // LOGV("socket(%d) Awake! Read buffer: %lu, front: %x", connsockfd, readsize, buffer.front());
+                buffer.resize(readsize);
+                write(connsockfd, buffer.data(), buffer.size());
+            }
+            close(connsockfd);
         });
     }
 
     void TearDown() {
+        shutdown(mSocketFD, SHUT_RDWR);
         mQuit.store(true);
         if (mSocketThread.joinable()) {
             mSocketThread.join();
@@ -67,9 +79,9 @@ protected:
     std::condition_variable mCondition;
 };
 
-TEST_F(UDPSocketClientTest, Connect) {
+TEST_F(TCPSocketClientTest, Connect) {
     SocketFD socketfd = -1;
-    UDPSocketClient client(socketfd);
+    TCPSocketClient client(socketfd);
 
     SocketAddress addr;
     memset(&addr, sizeof(addr), 0);
@@ -81,7 +93,7 @@ TEST_F(UDPSocketClientTest, Connect) {
     EXPECT_EQ(SocketReturn::SUCCESS, client.Disconnect());
 }
 
-TEST_F(UDPSocketClientTest, SendAndReceive) {
+TEST_F(TCPSocketClientTest, SendAndReceive) {
     SocketFD socketfd = -1;
     std::mutex mutex;
     std::condition_variable condition;
@@ -90,13 +102,13 @@ TEST_F(UDPSocketClientTest, SendAndReceive) {
     auto listener = std::make_shared<MockSocketListener>();
     ON_CALL(*listener, onBufferReceived(::testing::_, ::testing::_)).WillByDefault([&](const auto& addr, const auto& buffer) {
         std::unique_lock<std::mutex> lock(mutex);
-        // LOGV("socket(%d) Received: 0x%x, buffer.size(): %lu", socketfd, buffer[0], received.size());
+        LOGV("socket(%d) Received buffer.size(): %lu", socketfd, received.size());
         std::copy(buffer.begin(), buffer.end(), std::back_inserter(received));
         condition.notify_one();
     });
-    EXPECT_CALL(*listener, onBufferReceived(::testing::_, ::testing::_)).Times(MAX_MESSAGES);
+    EXPECT_CALL(*listener, onBufferReceived(::testing::_, ::testing::_)).Times(::testing::AtLeast(1));
 
-    UDPSocketClient client(socketfd);
+    TCPSocketClient client(socketfd);
 
     SocketAddress addr;
     memset(&addr, sizeof(addr), 0);
